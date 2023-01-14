@@ -1,0 +1,323 @@
+---
+title: "BD Case - Eleicoes"
+author: "thiagocalm"
+date: "02/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Bibliotecas
+
+```{r}
+library(basedosdados)
+library(tidyverse)
+```
+
+Configuração do projeto para acesso ao datalake da \#basededados
+
+```{r}
+set_billing_id("consulta-jan-2023")
+```
+
+# Exploração das bases de dados
+
+***Por:** Thiago Cordeiro Almeida*
+
+## Eleições brasileiras (TSE)
+
+Para as presentes análises exploratórias, vamos utilizar uma série de bases de dados que tenham armazenadas no repositório \#basededados. A principal base de dados que será explorada aqui está relacionada aos resultados das *eleições brasileiras* dos representantes do executivo a nível *federal* e *municipal*. Os dados são oriundos do TSE, contendo informações bianuais desde as eleições de 1994 a 2020. Os dados relacionados às eleições federais serão analisados com base nos últimos três pleitos concorridos, relacionados aos anos de 2010, 2014 e 2018. Para os dados relacionados às eleições municipais, serão também selecionadas com base nas últimas três realizações: 2012, 2016 e 2020. Para realizar tais análises para as eleições, serão utilizados os dados referentes aos datasets *detalhes_votacao_municipio*, *perfil_eleitorado_municipio_zona* e *resultados_candidato_municipio*.
+
+# Importação dos dados da BD+
+
+## detalhes_votacao_municipio
+
+Primeiro vamos importar os dados de algumas variáveis selecionadas sobre os detalhes das votações por município para todo o período de abrangência dos dados disponíveis.
+
+```{r}
+query_votacao <- c("SELECT ano, turno, sigla_uf, tipo_eleicao, id_municipio, cargo, aptos, comparecimento, abstencoes, proporcao_comparecimento, proporcao_votos_validos FROM `basedosdados.br_tse_eleicoes.detalhes_votacao_municipio` as votacao")
+
+tse_votacao <- read_sql(query_votacao)
+
+```
+
+## perfil_eleitorado_municipio_zona
+
+Agora vamos fazer o mesmo processo para algumas variáveis selecionadas relacionadas ao perfil do eleitorado cadastrado em cada zona eleitoral por município em todo o período.
+
+```{r}
+query_perfil <- c("SELECT ano, sigla_uf, id_municipio, genero, grupo_idade, eleitores FROM `basedosdados.br_tse_eleicoes.perfil_eleitorado_municipio_zona`")
+
+tse_perfil <- read_sql(query_perfil)
+
+```
+
+## resultado_candidato_municipio
+
+Por fim, vamos fazer o mesmo processo para algumas variáveis selecionadas relacionadas aos resultados das eleições em cada município em todo o período de cobertura dos dados.
+
+```{r}
+query_resultados <- c("SELECT ano, sigla_uf, id_municipio, turno, tipo_eleicao, cargo, sigla_partido, resultado, votos FROM `basedosdados.br_tse_eleicoes.resultados_candidato_municipio`")
+
+tse_resultados <- read_sql(query_resultados)
+
+```
+
+Agora que temos todos os dados em mãos, o próximo passo é darmos uma garimpada nas informações dos *períodos* e *tipos de eleições* que serão utilizadas na presente análise exploratória.
+
+# Seleção das informações a serem utilizadas
+
+## detalhes_votacao_municipio
+
+```{r}
+tse_votacao_pres <- tse_votacao %>%
+  filter(cargo == c("presidente")) %>% 
+  filter(ano == c(2010,2014,2018)) %>% 
+  filter(sigla_uf != "ZZ") %>% 
+  filter(sigla_uf != "VT")
+
+saveRDS(tse_votacao_pres, "./Data/tse_votacao_pres.rds")
+
+tse_votacao_pref <- tse_votacao %>% 
+  filter(cargo == c("prefeito")) %>% 
+  filter(ano == c(2012,2016,2020)) %>% 
+  filter(sigla_uf != "ZZ") %>% 
+  filter(sigla_uf != "VT")
+
+saveRDS(tse_votacao_pref, "./Data/tse_votacao_pref.rds")
+```
+
+## resultado_candidato_municipio
+
+```{r}
+tse_result_pres <- tse_resultados %>%
+  filter(cargo == c("presidente")) %>% 
+  filter(ano == c(2010,2014,2018)) %>%
+  arrange(ano,sigla_uf,id_municipio,votos)
+
+saveRDS(tse_result_pres, "./Data/tse_result_pres.rds")
+
+tse_result_pref <- tse_resultados %>% 
+  filter(cargo == c("prefeito")) %>% 
+  filter(ano == c(2012,2016,2020)) %>% 
+  arrange(ano,sigla_uf,id_municipio,votos)
+
+saveRDS(tse_result_pref, "./Data/tse_result_pref.rds")
+```
+
+# Análises exploratórias
+
+Agora que temos os dados devidamente limpos, podemos realizar algumas análises exploratórias para conhecer sobre os dados que estamos trabalhando.
+
+## detalhes_votacao_municipio
+
+Vamos começar conhecendo melhor as informações sobre detalhes das votações. Comecemos analisando brevemente os dados das votações presidenciais.
+
+```{r}
+summary(tse_votacao_pres)
+```
+
+Em média, vemos que foi registrado para todo o Brasil, cerca de 78,5% de eleitores comparencendo à votação. Daqueles votos válidos para todo o Brasil, foi registrado uma média de 92,6%.
+
+```{r}
+tse_votacao_pres %>% 
+  group_by(ano) %>% 
+  summarise(prop_comparecimento = mean(proporcao_comparecimento,na.rm = T),
+            prop_votos_validos = mean(proporcao_votos_validos, na.rm = T))
+```
+
+Quando analisamos por ano, vemos um cenário bastante semelhante à média para o Brasil como um todo e para todos os anos, o que indica que, aparentemente, não houve uma mudança brusca na proporção de pessoas que compareceram à votação ou que decidiram votar de forma válida neste período.
+
+Diante deste cenário, uma pergunta que pode surgir é: será que há uma grande variação por estado na proporção de comparecimento ou votos válidos?
+
+```{r}
+tse_votacao_pres %>% 
+  filter(sigla_uf != "DF") %>%
+  group_by(ano, sigla_uf) %>% 
+  summarise(
+    prop_comparecimento = mean(proporcao_comparecimento,na.rm = T)) %>%
+  arrange(desc(prop_comparecimento)) %>% 
+  ggplot() +
+  aes(x = sigla_uf, y = prop_comparecimento, group = factor(ano), fill = factor(ano)) +
+  geom_col(stat='identity', position = position_dodge()) +
+  geom_hline(aes(yintercept = mean(tse_votacao_pres$proporcao_comparecimento,na.rm = T),
+                 color = "#d95f0e"),
+             linetype = "dashed",
+             linewidth = 1.1,
+             show.legend = FALSE) +
+  coord_cartesian(ylim = c(0,100)) +
+  scale_y_continuous(breaks = seq(0,100,20)) +
+  scale_fill_brewer(palette = "Greens") +
+  annotate(geom="text", x="GO", y=88, label="Média de comparecimento (BR)",
+              color="#d95f0e", fontsize=8, fontface="bold") +
+  labs(y = "Comparecimento (%)",
+       x = "UF",
+       title = "Comparecimento às eleições presidenciais (%) por UF no Brasil (2010,2014,2018)",
+       subtitle = "Será que houve uma grande variação por estado na proporção de comparecimento?",
+       caption = "Fonte: TSE, BD+. @thiagocalm") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(family = "Calibri", face = "bold", size = 12, color = "#636363", hjust = .2),
+    plot.subtitle = element_text(family = "Calibri", face = "bold", size = 9, color = "#969696"),
+    legend.title = element_blank(),
+    legend.text = element_text(family = "Calibri", face = "bold", size = 8, color = "#636363"),
+    axis.title = element_text(family = "Calibri", face = "bold", size = 11, color = "#636363", hjust = 0),
+    axis.text = element_text(family = "Calibri", face = "bold", size = 8, color = "#969696"),
+    plot.caption = element_text(family = "Calibri", face = "bold", size = 8, color = "#636363", hjust = 1)
+  )
+  
+```
+
+Como pode ser visto, o Distrito Federal apresentou o maior indicativo de proporção de pessoas comparecendo às votações para os anos analisados (88,3%), com cerca de 10 pontos percentuais acima da média nacional. O pior colocado neste ranking foi o estado do Amazonas, com somente 41% de sua população comparecendo para a votação, cerca de 36,4% abaixo da proporção nacional de pessoas que compareceram.
+
+Será que o mesmo cenário se mantém quando analisamos as eleições executivas municipais? Embora as eleições para os cargos executivos municipais sejam em distintos anos, uma análise do mesmo teor pode mostrar até que ponto há uma maior ou menor participação nas eleições de nível municipal em detrimento das eleições executivas federais.
+
+```{r}
+summary(tse_votacao_pref)
+```
+
+Podemos ver que, em média, cerca de 84,6% das pessoas aptas a votarem comparecem à eleição para o posto executivo municipal. Dessas, cerca de 92% tiveram seu voto válido para os anos analisados.
+
+```{r}
+tse_votacao_pref %>% 
+  group_by(ano) %>% 
+  summarise(prop_comparecimento = mean(proporcao_comparecimento,na.rm = T),
+            prop_votos_validos = mean(proporcao_votos_validos, na.rm = T))
+```
+
+Quando analisamos a proporção de comparecimento nacional média e dos votos válidos, podemos observar que não houve grande diferença em detrimento da média geral. Até mesmo nas eleições de 2020, ocorrendo diante de um contexto atípico em que poderia ser esperado um menor comparecimento, de fato houve uma redução, mas não substancial diante da tendência anterior.
+
+Qual o comportamento regional (a nível de estado) acerca do comparecimento médio para as eleições do executivo municipal?
+
+```{r}
+tse_votacao_pref %>% 
+  group_by(sigla_uf) %>% 
+  summarise(prop_comparecimento = mean(proporcao_comparecimento,na.rm = T),
+            prop_votos_validos = mean(proporcao_votos_validos, na.rm = T),
+            desv_BR_uf_comparecimento = mean(tse_votacao_pref$proporcao_comparecimento,
+                                             na.rm = T) - prop_comparecimento,
+            desv_BR_uf_validos = mean(tse_votacao_pref$proporcao_comparecimento,
+                                      na.rm = T) - prop_votos_validos
+              ) %>% 
+  arrange(desc(prop_comparecimento)) %>% 
+  ggplot(aes(y = prop_comparecimento, x = sigla_uf)) +
+  geom_bar( stat='identity',color = '#7cb342', fill = '#7cb342') +
+  geom_hline(aes(yintercept = mean(tse_votacao_pref$proporcao_comparecimento,
+                                      na.rm = T),
+                 color = "#d95f0e"), linetype = "dotted", show.legend = FALSE) +
+  theme_classic() +
+  labs(x = "Comparecimento (%)",
+       y = "UF",
+       title = "Comparecimento às eleições municipais (%) por UF no Brasil",
+       subtitle = "Será que há uma grande variação por estado na proporção de comparecimento?",
+       caption = "Fonte: TSE, BD+")
+```
+
+Aparentemente, há uma menor variação em relação à proporção de pessoas que comparecerma às eleições municipais por estado em relação à média nacional. Desses estados, Rondônia foi aquele que apresentou pior colocação no ranking de proporção de pessoas que compareceram às eleições municipais, com cerca de 77% (o que representa cerca de 7% abaixo da média nacional).
+
+## resultado_candidato_município
+
+Para uma análise geral dos resultados das eleições, vamos nos ater somente em destrinchar o comportamento dos votos de candidatos eleitos a nível federal em seu primeiro turno. Para tanto, podemos criar um indicador da proporção dos votos recebidos pelos candidatos eleitos em relação ao total de votos registrados no estado.
+
+```{r}
+#para 2010
+
+tse_result_pres_2010 <- tse_result_pres %>%
+  filter(ano == 2010) %>%
+  filter(turno == 1) %>% 
+  filter(sigla_uf != "ZZ") %>% 
+  filter(sigla_uf != "VT") %>%
+  group_by(sigla_uf,sigla_partido) %>% 
+  summarise(votos_total = sum(votos),
+            votos_PT = case_when(
+              sigla_partido == 'PT' ~ votos_total,
+              sigla_partido != 'PT' ~ 0)) %>%
+  distinct(sigla_uf, sigla_partido, .keep_all = T) %>% 
+  group_by(sigla_uf) %>% 
+  summarise(votos_uf = sum(votos_total),
+            votos_pt_uf = sum(votos_PT),
+            prop_vencedor_2010 = votos_pt_uf/votos_uf) %>% 
+  arrange(desc(prop_vencedor_2010))
+
+# para 2014
+
+tse_result_pres_2014 <- tse_result_pres %>%
+  filter(ano == 2014) %>%
+  filter(turno == 1) %>% 
+  filter(sigla_uf != "ZZ") %>% 
+  filter(sigla_uf != "VT") %>%
+  group_by(sigla_uf,sigla_partido) %>% 
+  summarise(votos_total = sum(votos),
+            votos_PT = case_when(
+              sigla_partido == 'PT' ~ votos_total,
+              sigla_partido != 'PT' ~ 0)) %>%
+  distinct(sigla_uf, sigla_partido, .keep_all = T) %>% 
+  group_by(sigla_uf) %>% 
+  summarise(votos_uf = sum(votos_total),
+            votos_pt_uf = sum(votos_PT),
+            prop_vencedor_2014 = votos_pt_uf/votos_uf) %>% 
+  arrange(desc(prop_vencedor_2014))
+
+# para 2018
+
+tse_result_pres_2018 <- tse_result_pres %>%
+  filter(ano == 2018) %>%
+  filter(turno == 1) %>% 
+  filter(sigla_uf != "ZZ") %>% 
+  filter(sigla_uf != "VT") %>%
+  group_by(sigla_uf,sigla_partido) %>% 
+  summarise(votos_total = sum(votos),
+            votos_PSL = case_when(
+              sigla_partido == 'PSL' ~ votos_total,
+              sigla_partido != 'PSL' ~ 0)) %>%
+  distinct(sigla_uf, sigla_partido, .keep_all = T) %>% 
+  group_by(sigla_uf) %>% 
+  summarise(votos_uf = sum(votos_total),
+            votos_psl_uf = sum(votos_PSL),
+            prop_vencedor_2018 = votos_psl_uf/votos_uf) %>% 
+  arrange(desc(prop_vencedor_2018))
+
+## junção das variáveis criadas em um dataframe
+
+tse_result_pres_ano <-
+  full_join(x = tse_result_pres_2010, y = tse_result_pres_2014, by = c("sigla_uf"))
+tse_result_pres_ano <-
+  full_join(x = tse_result_pres_ano, y = tse_result_pres_2018, by = c("sigla_uf"))
+  
+tse_result_pres_ano <- tse_result_pres_ano %>% 
+  select(c(sigla_uf, prop_vencedor_2010, prop_vencedor_2014, prop_vencedor_2018)) %>% 
+  rename(PT_2010 = prop_vencedor_2010,
+         PT_2014 = prop_vencedor_2014,
+         PSL_2018 = prop_vencedor_2018)
+
+```
+
+Agora que temos um indicador do desempenho no primeiro turno dos candidatos vencedores em cada um dos anos, algumas análises podem ser realizadas.
+
+```{r}
+summary(tse_result_pres_ano)
+```
+
+No primeiro turno, a candidata Dilma Rousseff (PT) teve um desempenho de cerca de 47% dos votos válidos a nível nacional para o ano de 2010 e, em sua segunda candidatura para 2014, o desempenho foi semelhante, com cerca de 45%. Já o candidato Jair Bolsonaro (PSL) teve um desempenho de cerca de 37% dos votos válidos para o Brasil como um todo no seu primeiro turno.
+
+Mas qual foi o desempenho de cada candidatura eleita por estado?
+
+```{r}
+tse_result_pres_ano %>% 
+  ggplot(aes(x = sigla_uf, y = PT_2010)) +
+  geom_bar(aes(color = "PT-2014", fill = "#de2d26"), stat = "identity", show.legend = F) +
+  geom_point(aes(y = PT_2014)) +
+  geom_point(aes(y = PSL_2018, color = "PSL-2018")) +
+   theme_classic() +
+  labs(x = "Prop. votos válidos (%)",
+       y = "UF",
+       title = "Proporção de votos no 1º turno dos candidatos eleitos por UF",
+       subtitle = "Houve muita variação por estado entre candidatos eleitos?") +
+  scale_color_manual(values=c("#de2d26","grey","red")) +
+  theme(legend.position = "right",
+        plot.title = element_text(size = rel(1.2), lineheight = .9),title = element_blank())
+```
+
+O gráfico acima tem as barras como referência a eleição de 2010, quando a Dilma Rousseff foi eleita. Podemos ver que para todas as eleições, houve uma variabilidade considerável entre os estados. Talvez aquele que mais nos chama a atenção é referente ao estado do Piauí, onde, em 2014 houve uma proporção de mais de 80% dos votos (só no primeiro turno!) na candidatura que foi eleita e, no ano de 2018, a candidatura eleita teve uma participação de cerca de 30% dos votos no primeiro turno.
